@@ -175,6 +175,10 @@ function offerPrevious() {
             localStorage.setItem(PREVIOUS_KEY, JSON.stringify({ ...previous, saved: true }));
             $('previous').hidden = true;
         };
+        $('discard-previous').onclick = () => {
+            localStorage.removeItem(PREVIOUS_KEY);
+            $('previous').hidden = true;
+        };
     } catch {
         // No storage: nothing to offer.
     }
