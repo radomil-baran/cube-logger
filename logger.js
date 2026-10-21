@@ -22,7 +22,8 @@ const TEST_SILENCE_MS = 60_000;    // no move at all within this time fails the 
 
 const records = [];       // every line after META, in arrival order
 const connections = [];   // one entry per successful connection; goes into META
-let savedCount = 0;       // records already in a downloaded file
+let changes = 0;          // moves and marks so far: what is lost if the tab closes unsaved
+let savedChanges = 0;     // changes already in a downloaded file (background packets don't count)
 let conn = null;
 let moveCount = 0;
 let lastMoves = [];
@@ -103,6 +104,12 @@ function tapGatt() {
 
 const rawCapture = tapGatt();
 
+/** Log what the user or the page did. */
+function mark(what, fields = {}) {
+    records.push({ type: 'MARK', what, ...fields, ...hostTimes() });
+    changes += 1;
+}
+
 // --- the log file ---------------------------------------------------------------------------
 
 function buildFile() {
@@ -135,7 +142,7 @@ function download(text, name) {
 
 function save() {
     download(buildFile(), fileName());
-    savedCount = records.length;
+    savedChanges = changes;
     autosave();
     render();
 }
@@ -145,7 +152,7 @@ function autosave() {
     if (records.length === 0) return;
     try {
         localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
-            name: fileName(), saved: savedCount === records.length, text: buildFile(),
+            name: fileName(), saved: savedChanges === changes, text: buildFile(),
         }));
     } catch {
         // Full or blocked storage: the copy is a convenience, the download is what counts.
@@ -210,7 +217,7 @@ async function connect() {
         ...hostTimes(),
     };
     connections.push(info);
-    records.push({ type: 'MARK', what: 'connected', device: info.device, ...hostTimes() });
+    mark('connected', { device: info.device });
     connectedMs ??= performance.now();
     conn.events$.subscribe(onCubeEvent);
     for (const [capability, command] of [['hardware', 'REQUEST_HARDWARE'], ['battery', 'REQUEST_BATTERY'],
@@ -264,10 +271,8 @@ function evaluateTest() {
     ];
     const failed = checks.some(c => !c.ok && !c.warnOnly);
     test.done = true;
-    records.push({
-        type: 'MARK', what: failed ? 'self_test_failed' : 'self_test_passed',
-        checks: checks.map(c => ({ text: c.text, ok: c.ok })), moves: moves.length, ...hostTimes(),
-    });
+    mark(failed ? 'self_test_failed' : 'self_test_passed',
+         { checks: checks.map(c => ({ text: c.text, ok: c.ok })), moves: moves.length });
     $('test-result').innerHTML = checks
         .map(c => `<li>${c.ok ? '✅' : c.warnOnly ? '⚠️' : '❌'} ${c.text}</li>`).join('');
     $('test-verdict').textContent = failed
@@ -285,6 +290,7 @@ function onCubeEvent(event) {
     switch (message.type) {
         case 'MOVE':
             moveCount += 1;
+            changes += 1;
             lastMoveMs = performance.now();
             lastMoves = [...lastMoves, message.move].slice(-SHOWN_MOVES);
             break;
@@ -296,7 +302,7 @@ function onCubeEvent(event) {
             break;
         case 'DISCONNECT':
             conn = null;
-            records.push({ type: 'MARK', what: 'disconnected', ...hostTimes() });
+            mark('disconnected');
             status('Kostka się rozłączyła. Połącz ją ponownie: nagranie trwa dalej w tym samym pliku.', 'error');
             $('connect').disabled = false;
             break;
@@ -306,11 +312,11 @@ function onCubeEvent(event) {
 
 /** The user says the cube is solved; cubes that support it are told so (resets their memory). */
 async function markSolved() {
-    records.push({ type: 'MARK', what: 'user_says_solved', ...hostTimes() });
+    mark('user_says_solved');
     if (conn?.capabilities.reset) {
         try {
             await conn.sendCommand({ type: 'REQUEST_RESET' });
-            records.push({ type: 'MARK', what: 'reset_to_solved', ...hostTimes() });
+            mark('reset_to_solved');
             if (conn.capabilities.facelets) await conn.sendCommand({ type: 'REQUEST_FACELETS' });
         } catch (error) {
             status(`Nie udało się zresetować kostki: ${error.message}`, 'error');
@@ -350,7 +356,7 @@ function render() {
     $('last-move').textContent = lastMoveMs === null ? '–' : `${Math.round((now - lastMoveMs) / 1000)} s temu`;
     $('move-list').textContent = lastMoves.join(' ') || '–';
     $('solved-button').disabled = !conn;
-    const unsaved = records.length - savedCount;
+    const unsaved = changes - savedChanges;
     $('save').disabled = records.length === 0;
     $('save-note').textContent = records.length === 0 ? ''
         : unsaved === 0 ? 'Wszystko zapisane ✓' : 'Niezapisane dane: kliknij „Zapisz plik” przed zamknięciem strony.';
@@ -374,7 +380,7 @@ function init() {
         if (document.visibilityState === 'visible' && conn) keepAwake();  // the lock drops when hidden
     });
     window.addEventListener('beforeunload', event => {
-        if (records.length > savedCount) {
+        if (changes > savedChanges) {
             autosave();
             event.preventDefault();
             event.returnValue = '';
