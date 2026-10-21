@@ -249,7 +249,8 @@ function evaluateTest() {
     if (moves.length < TEST_MOVES) {
         const silent = moves.length === 0 && performance.now() - test.startMs > TEST_SILENCE_MS;
         if (!silent) {
-            $('test-verdict').textContent = `Zrób ${TEST_MOVES} dowolnych ruchów: ${moves.length} / ${TEST_MOVES}`;
+            $('test-verdict').textContent =
+                `Na ułożonej kostce zrób R R' U U' F F' L L': ${moves.length} / ${TEST_MOVES}`;
             return;
         }
     }
