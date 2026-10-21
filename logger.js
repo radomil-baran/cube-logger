@@ -30,7 +30,8 @@ let lastMoves = [];
 let lastMoveMs = null;
 let connectedMs = null;
 let wakeLock = null;
-let test = null;          // connection test: { from: first record index, startMs, done }
+let disconnecting = false; // the user asked to disconnect: the disconnection that follows is expected
+let test = null;         // connection test: { from: first record index, startMs, done }
 
 const $ = id => document.getElementById(id);
 
@@ -203,7 +204,9 @@ async function connect() {
     status('Łączenie…');
     try {
         conn = await connectSmartCube({
-            enableAddressSearch: true,
+            // No MAC guessing: for MoYu it sends commands encrypted with wrong keys, i.e. random bytes
+            // the cube must reject. The MAC comes from advertisements (flag) or from the user.
+            enableAddressSearch: false,
             macAddressProvider: askMac,
             onStatus: message => status(message),
         });
@@ -305,12 +308,34 @@ function onCubeEvent(event) {
             $('battery').textContent = `${message.batteryLevel}%`;
             break;
         case 'DISCONNECT':
-            conn = null;
-            mark('disconnected');
-            status('Kostka się rozłączyła. Połącz ją ponownie: nagranie trwa dalej w tym samym pliku.', 'error');
-            $('connect').disabled = false;
+            if (conn) onDisconnected();
             break;
     }
+    render();
+}
+
+async function disconnect() {
+    if (!conn) return;
+    disconnecting = true;
+    const closing = conn;
+    try {
+        await closing.disconnect();
+    } catch {
+        // Already gone: the result is the same.
+    }
+    if (conn === closing) onDisconnected();  // the library did not report it as an event
+}
+
+function onDisconnected() {
+    conn = null;
+    mark('disconnected', { by_user: disconnecting });
+    if (disconnecting) {
+        status('Rozłączono. Zapisz plik albo połącz kostkę ponownie.', 'ok');
+    } else {
+        status('Kostka się rozłączyła. Połącz ją ponownie: nagranie trwa dalej w tym samym pliku.', 'error');
+    }
+    disconnecting = false;
+    $('connect').disabled = false;
     render();
 }
 
@@ -360,6 +385,7 @@ function render() {
     $('last-move').textContent = lastMoveMs === null ? '–' : `${Math.round((now - lastMoveMs) / 1000)} s temu`;
     $('move-list').textContent = lastMoves.join(' ') || '–';
     $('solved-button').disabled = !conn;
+    $('disconnect').disabled = !conn;
     const unsaved = changes - savedChanges;
     $('save').disabled = records.length === 0;
     $('save-note').textContent = records.length === 0 ? ''
@@ -376,6 +402,7 @@ function init() {
     $('connect').onclick = connect;
     $('solved-button').onclick = markSolved;
     $('test-again').onclick = startTest;
+    $('disconnect').onclick = disconnect;
     $('save').onclick = save;
     offerPrevious();
     setInterval(render, 1000);
