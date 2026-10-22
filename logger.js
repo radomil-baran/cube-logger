@@ -31,7 +31,9 @@ let lastMoveMs = null;
 let connectedMs = null;
 let wakeLock = null;
 let disconnecting = false; // the user asked to disconnect: the disconnection that follows is expected
-let test = null;         // connection test: { from: first record index, startMs, done }
+let latestFacelets = null;    // the cube's last reported state (54 stickers)
+let solvedReference = SOLVED; // the state that counts as solved for the page (see showState)
+let test = null;        // connection test: { from: first record index, startMs, done }
 
 const $ = id => document.getElementById(id);
 
@@ -302,7 +304,8 @@ function onCubeEvent(event) {
             lastMoves = [...lastMoves, message.move].slice(-SHOWN_MOVES);
             break;
         case 'FACELETS':
-            if (message.facelets.length === 54) $('state').textContent = message.facelets === SOLVED ? 'ułożona ✓' : 'pomieszana';
+            if (message.facelets.length === 54) latestFacelets = message.facelets;
+            showState();
             break;
         case 'BATTERY':
             $('battery').textContent = `${message.batteryLevel}%`;
@@ -339,19 +342,36 @@ function onDisconnected() {
     render();
 }
 
+/**
+ * "Solved" or "scrambled" for the page. A cube keeps its state by applying the turns it detects
+ * to the state it believes it started from; that belief can be off, and some cubes (MoYu) cannot
+ * be reset. So "solved" is the state the cube reported when the user last said it was solved.
+ */
+function showState() {
+    if (latestFacelets) $('state').textContent = latestFacelets === solvedReference ? 'ułożona ✓' : 'pomieszana';
+}
+
 /** The user says the cube is solved; cubes that support it are told so (resets their memory). */
 async function markSolved() {
     mark('user_says_solved');
+    const time = new Date().toLocaleTimeString('pl-PL');
     if (conn?.capabilities.reset) {
         try {
             await conn.sendCommand({ type: 'REQUEST_RESET' });
             mark('reset_to_solved');
+            solvedReference = SOLVED;
             if (conn.capabilities.facelets) await conn.sendCommand({ type: 'REQUEST_FACELETS' });
+            $('solved').textContent = `Zapisano (${time}): kostka ułożona ✓, jej pamięć zresetowana.`;
         } catch (error) {
             status(`Nie udało się zresetować kostki: ${error.message}`, 'error');
         }
+    } else {
+        // This cube cannot be told it is solved: remember what it reports now as "solved".
+        if (latestFacelets) solvedReference = latestFacelets;
+        $('solved').textContent = `Zapisano (${time}): kostka ułożona ✓. Ta kostka nie przyjmuje resetu, ` +
+            'więc strona zapamiętała jej obecny stan jako „ułożona”. Wszystko w porządku.';
     }
-    $('solved').textContent = 'Zapisano: kostka ułożona ✓';
+    showState();
     render();
 }
 
