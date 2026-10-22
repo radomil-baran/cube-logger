@@ -403,6 +403,16 @@ function init() {
     $('solved-button').onclick = markSolved;
     $('test-again').onclick = startTest;
     $('disconnect').onclick = disconnect;
+    for (const button of document.querySelectorAll('button[data-copy]')) {
+        button.onclick = async () => {
+            try {
+                await navigator.clipboard.writeText(button.dataset.copy);
+                button.textContent = 'Skopiowano ✓';
+            } catch {
+                button.textContent = 'Zaznacz i skopiuj ręcznie';
+            }
+        };
+    }
     $('save').onclick = save;
     offerPrevious();
     setInterval(render, 1000);
